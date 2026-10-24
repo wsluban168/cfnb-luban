@@ -882,3 +882,84 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 ---
 
 **许可证**：本项目采用 [MIT License](https://opensource.org/licenses/MIT) 开源。
+
+---
+
+## bestcf 自建优选接口（Cloudflare Pages）
+
+`bestcf/bestcf.zip` 是一个 Cloudflare Pages 项目，把本仓库 cfnb 自测的 `ip.txt` 和第三方优选源合并成一个订阅接口，供 edgetunnel 的「优选订阅 / ADDAPI」使用。
+
+### 取 IP 的顺序（四道后手）
+
+1. 自测：本仓库 `ip.txt`（排最前）
+2. 第三方源（每个 5 秒超时、缓存 10 分钟）
+3. KV 里上次成功的结果
+4. 内置 16 个 Cloudflare 官方段 IP
+
+永远不会返回空。
+
+### 部署步骤
+
+1. 下载本仓库 `bestcf/bestcf.zip`，**不要解压**。
+2. Cloudflare 控制台 → 计算 (Workers) → Workers 和 Pages → 创建。
+3. 切到 **Pages** 标签 → 上传资产 → 开始使用 → 项目名填 `bestcf` → 创建项目。
+4. 从计算机中选择 → 压缩文件 (zip) → 选 `bestcf.zip` → 部署站点，记下 `xxx.pages.dev` 地址。
+5. 测试：打开 `https://xxx.pages.dev/bestcf?ips=20`，看到一行行 `IP:443#备注` 即成功。
+6. 加密码：项目 → 设置 → 变量和机密 → 添加，类型「文本」，名称 `KEY`，值为只含字母数字的密码 → 保存。
+7. 加 KV：左侧菜单 → 存储和数据库 → KV → 创建命名空间 `bestcf-kv`；回到项目 → 设置 → 绑定 → 添加 → KV 命名空间，变量名 `KV`，选 `bestcf-kv` → 保存。
+8. 重新部署：项目 → 部署 → 创建新部署 → 再传一次 `bestcf.zip` → 保存并部署（不重新部署，KEY 和 KV 不生效）。
+9. 再测：不带 key 应返回 403；加 `&key=你的密码` 应返回 IP 列表。
+10. 绑定自定义域（推荐，pages.dev 国内常打不开）：项目 → 自定义域 → 设置自定义域 → 填如 `cf.bzc.kdns.fr` → 激活域，等状态变「活动」。
+11. edgetunnel 后台 `/admin` → 优选订阅 填：
+    `https://cf.bzc.kdns.fr/bestcf?ips=45&key=你的密码` → 保存，客户端更新订阅。
+
+### 环境变量（都可不填）
+
+| 变量 | 例子 | 作用 |
+|---|---|---|
+| `KEY` | `luban2026` | 访问密码，设置后地址必须带 `key=` |
+| `OWN` | `https://raw.githubusercontent.com/wsluban168/cfnb-luban/main/ip.txt` | 自测结果地址，已内置，换仓库时才填 |
+| `SOURCES` | `https://090227.pages.dev/bestcf?isp=all&ips=50,https://另一个源/ip.txt` | 第三方源，多个用英文逗号隔开，填了就替换内置源 |
+
+绑定：KV 命名空间，变量名必须是 `KV`（可选，强烈建议）。
+
+改完变量或绑定后都要「创建新部署」重新上传 zip。
+
+### 地址参数
+
+写在 `/bestcf?` 后面，多个参数用 `&` 连接。
+
+- `key=密码`：设置了 KEY 时必填
+- `ips=数字`：返回条数，1–200，默认 20
+- `isp=all|ct|cu|cm`：第三方只要 全部/电信/联通/移动，默认 all（自测结果始终保留）
+- `own=0`：不要自测结果，只用第三方
+- `port=端口`：默认 443，如 2053、8443
+- `domain=1`：保留第三方的优选域名（默认去掉）
+
+例子：
+
+- 日常（自测 + 第三方）：`/bestcf?ips=45&key=密码`
+- 只要移动、不要自测：`/bestcf?ips=20&isp=cm&own=0&key=密码`
+- 自测前 10 个、端口 2053：`/bestcf?ips=10&port=2053&key=密码`
+
+注意：自测有多少条就先占多少条，`ips` 小于自测条数时只会看到自测结果。
+
+### 内置默认值
+
+- 第三方源：`https://090227.pages.dev/bestcf?isp=all&ips=50`
+- 路径：`/` 和 `/bestcf`，其他 404
+- KV 键名：`last`
+- 节点备注：自测为「自测 + cfnb 原备注」，第三方为「CF 电信/联通/移动」，保底为「官方段」
+
+### 自检
+
+响应头：
+
+- `X-From`：`live` / `kv` / `builtin`，表示用了哪一道
+- `X-Source-Status`：每个源拿到几条或失败
+
+### 常见问题
+
+- **403**：没带 key 或大小写不对。
+- **只有「官方段」**：所有源都失败，检查 cfnb 最近是否推送成功。
+- **改了变量没反应**：忘了重新部署。
